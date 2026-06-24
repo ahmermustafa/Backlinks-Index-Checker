@@ -1,23 +1,55 @@
-import sqlite3 from 'sqlite3';
-import { open, Database } from 'sqlite';
+import Database from 'better-sqlite3';
 import path from 'path';
-import fs from 'fs';
 
-let dbInstance: Database | null = null;
+type RunResult = { lastID?: number; changes: number };
 
-export async function initDb(): Promise<Database> {
+class DbWrapper {
+  private db: Database.Database;
+
+  constructor(db: Database.Database) {
+    this.db = db;
+  }
+
+  // Mimic sqlite's db.run(sql, params) -> Promise<{ lastID, changes }>
+  async run(sql: string, params: any[] = []): Promise<RunResult> {
+    const stmt = this.db.prepare(sql);
+    const info = stmt.run(...params);
+    return {
+      lastID: Number(info.lastInsertRowid),
+      changes: info.changes
+    };
+  }
+
+  // Mimic sqlite's db.all(sql, params) -> Promise<any[]>
+  async all(sql: string, params: any[] = []): Promise<any[]> {
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params);
+  }
+
+  // Mimic sqlite's db.get(sql, params) -> Promise<any>
+  async get(sql: string, params: any[] = []): Promise<any> {
+    const stmt = this.db.prepare(sql);
+    return stmt.get(...params);
+  }
+
+  // Mimic sqlite's db.exec(sql) -> Promise<void>
+  async exec(sql: string): Promise<void> {
+    this.db.exec(sql);
+  }
+}
+
+let dbInstance: DbWrapper | null = null;
+
+export async function initDb(): Promise<DbWrapper> {
   if (dbInstance) return dbInstance;
 
-  // Ensure directory exists if needed, but here it's root or relative
   const dbPath = path.resolve(process.cwd(), 'backlinks.db');
-
-  dbInstance = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
+  const rawDb = new Database(dbPath);
 
   // Enable foreign keys
-  await dbInstance.run('PRAGMA foreign_keys = ON');
+  rawDb.pragma('foreign_keys = ON');
+
+  dbInstance = new DbWrapper(rawDb);
 
   // Create tables
   await dbInstance.exec(`
@@ -32,7 +64,6 @@ export async function initDb(): Promise<Database> {
       current_url TEXT DEFAULT '',
       status TEXT NOT NULL
     );
-
     CREATE TABLE IF NOT EXISTS backlinks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_id INTEGER NOT NULL,
@@ -48,6 +79,6 @@ export async function initDb(): Promise<Database> {
   return dbInstance;
 }
 
-export async function getDb(): Promise<Database> {
+export async function getDb(): Promise<DbWrapper> {
   return initDb();
 }
